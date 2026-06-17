@@ -141,26 +141,6 @@ spec:
     syncOptions:
     - CreateNamespace=true
 ```
-
----
-
-## 📊 Why Grafana Runs as a Single Replica
-
-Grafana stores dashboards, users, and data source config in **local SQLite** by default.
-
-Deployment (replicas: 2)
-│
-├── Pod A → own isolated filesystem → grafana.db lives HERE only
-└── Pod B → own isolated filesystem → grafana.db lives HERE only
-
-**Kubernetes Deployments do not share disk across replicas by default.** A dashboard created while talking to Pod A simply doesn't exist when traffic happens to route to Pod B.
-
-Even with a shared `ReadWriteMany` volume attached to both pods, SQLite isn't designed for concurrent writes from multiple processes — file locking conflicts would occur.
-
-> **✅ The correct production fix:** set `GF_DATABASE_TYPE=postgres` to move Grafana's state to an external database before scaling horizontally.
-
-This mirrors why MariaDB in production runs as a **StatefulSet** with one PVC *per pod*, not a shared volume across replicas — replication happens at the database protocol level, not the filesystem level.
-
 ---
 
 ## 🧪 Testing Self-Heal — What To Expect
@@ -178,16 +158,43 @@ kubectl get deployment nginx -n webapp
 
 ---
 
-## ⚖️ Comparison to the EKS-Based Tutorial
+## 🔍 syncPolicy — Every Field, What Happens In Each Case
 
-| Step | EKS Tutorial | This Repo (kubeadm/GCP) |
-|:---|:---:|:---:|
-| Cluster | EKS (managed) | kubeadm (self-managed) |
-| Expose ArgoCD UI | LoadBalancer + public DNS | NodePort + node IP |
-| Expose apps | LoadBalancer | NodePort |
-| Install ArgoCD | Same manifest | Same manifest |
-| Application YAML | Same structure | Same structure |
-| Self-heal behaviour | Identical | Identical |
+### automated block
+
+| Field | true | false (default) | What happens in this repo |
+|:---|:---|:---|:---|
+| **prune** | Deletes resources removed from Git | Leaves orphaned resources in cluster | Delete a YAML file from `manifests/`, push — matching resource is deleted from cluster automatically |
+| **selfHeal** | Auto-reverts manual cluster drift | Shows "OutOfSync", waits for manual click | `kubectl delete deployment nginx` gets reverted — deployment comes back within seconds |
+| **allowEmpty** | Allows sync that wipes everything | Blocks sync that would result in zero resources | Protects against an accidental empty folder deleting a whole running app |
+
+### syncOptions list
+
+| Option | What it does | Why it matters here |
+|:---|:---|:---|
+| `CreateNamespace=true` | Auto-creates destination namespace if missing | This is why `webapp` and `monitoring` namespaces appeared without manual `kubectl create namespace` |
+| `PrunePropagationPolicy=foreground` | Waits for child objects (Pods) to fully delete before parent is considered deleted | Cleaner, more predictable deletion order during prune |
+| `PruneLast=true` | Deletions happen after all creates/updates succeed | Avoids brief service gaps when a sync both creates and deletes resources |
+| `Validate=false` | Skips kubectl schema validation | Useful for CRDs ArgoCD's bundled schema doesn't recognize — not needed for our plain Deployment/Service |
+| `ApplyOutOfSyncOnly=true` | Only re-applies resources that actually drifted | Performance optimization for Applications with many resources |
+| `RespectIgnoreDifferences=true` | Honors a separate `ignoreDifferences` field for fields that are allowed to drift | Important once HPA is added — replica count changes from HPA shouldn't trigger selfHeal reverts |
+
+### retry block (not configured in this repo, but production-relevant)
+
+```yaml
+retry:
+  limit: 5
+  backoff:
+    duration: 5s
+    factor: 2
+    maxDuration: 3m
+```
+
+Without this block, a sync that fails due to a transient issue (e.g. brief network blip to GitHub) simply shows **Failed** with no automatic retry. Adding `retry` makes ArgoCD attempt the sync again with exponential backoff (5s → 10s → 20s → 40s → 80s, capped at 3 minutes) before giving up.
+
+> **🎤** *"prune and selfHeal are the two fields that make ArgoCD feel 'magic' — they're what makes the cluster self-correcting. allowEmpty is the safety net underneath both. The syncOptions list handles operational details like namespace creation and deletion ordering. In a hardened production setup I'd also add a retry block so transient Git or network failures don't require manual intervention."*
+
+---
 
 > **The GitOps concepts and ArgoCD mechanics are identical regardless of cluster provider.** Only the Service exposure method changes — proof that understanding fundamentals transfers across any infrastructure.
 
@@ -195,6 +202,7 @@ Note : This Repo is Just to Understand the Concepts of GITOPS & ARCOCD , this do
 Its just deploy some deployments and demostrates the use cases of GitOps and ARGOCD in detail .
 
 ---
+
 
 <div align="center">
 
