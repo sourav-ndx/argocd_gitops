@@ -42,9 +42,9 @@ What took longer was everything around it. Full story in [docs/troubleshooting-l
 ![Guestbook Graph](docs/images/argocd-guestbook-graph.png)
 
 ### Apps Running in Browser
-![Guestbook](docs/images/guestbook-app.png)
-![Grafana](docs/images/grafana-login.png)
-![Nginx](docs/images/nginx-welcome.png)
+![Guestbook](docs/guestbook-app.png)
+![Grafana](docs/grafana-login.png)
+![Nginx](docs/nginx-welcome.png)
 
 ---
 
@@ -95,43 +95,7 @@ Full comparison in [docs/gitops-explained.md](docs/gitops-explained.md).
 
 ## ⚠️ GCP Prerequisites — Do This First
 
-> Skipping these will cause silent, hard-to-diagnose failures — especially the IP-in-IP rule which took hours to find.
-
-### Allow Calico IP-in-IP tunnel traffic (Critical)
-```bash
-gcloud compute firewall-rules create allow-calico-ipip \
-    --network=default \
-    --allow=ipip \
-    --direction=INGRESS \
-    --source-ranges=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 \
-    --description="Allow Calico IP-in-IP traffic between K8s nodes"
-```
-
-### Allow internal cluster traffic
-```bash
-gcloud compute firewall-rules create allow-k8s-internal \
-    --network=default \
-    --allow=tcp,udp,icmp \
-    --direction=INGRESS \
-    --source-ranges=10.128.0.0/9,192.168.0.0/16
-```
-
-### Allow ArgoCD UI and app NodePorts
-```bash
-gcloud compute firewall-rules create allow-argocd-nodeport \
-    --network=default \
-    --allow=tcp:30843 \
-    --direction=INGRESS \
-    --source-ranges=0.0.0.0/0
-
-gcloud compute firewall-rules create allow-webapp-nodeports \
-    --network=default \
-    --allow=tcp:30080,tcp:30030,tcp:30088 \
-    --direction=INGRESS \
-    --source-ranges=0.0.0.0/0
-```
-
-Full GCP setup guide: [docs/gcp-setup-guide.md](docs/gcp-setup-guide.md)
+> Running on raw GCP VMs? You need specific firewall rules before anything works. Full guide here: [docs/gcp-setup-guide.md](docs/gcp-setup-guide.md)
 
 ---
 
