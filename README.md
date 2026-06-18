@@ -78,16 +78,9 @@ argocd_gitops/
 
 ## 🌐 Why NodePort Instead of LoadBalancer
 
-Tutorials based on EKS use `type: LoadBalancer` — AWS auto-provisions a real load balancer with a public DNS name. This cluster runs on raw kubeadm GCP VMs — there is no cloud controller to fulfil that request, so the EXTERNAL-IP stays `<pending>` forever.
+This cluster runs on raw kubeadm VMs — there is no cloud controller to provision external load balancers. If you set `type: LoadBalancer` on any Service, the EXTERNAL-IP stays `<pending>` forever because nothing in the cluster knows how to fulfil it.
 
-**NodePort is the correct equivalent** for a self-managed cluster — access via `<node-ip>:<nodeport>` instead of a DNS name.
-
-| | LoadBalancer (EKS) | NodePort (kubeadm) |
-|:---|:---:|:---:|
-| **Who provisions it** | AWS Cloud Controller | Built into kube-proxy |
-| **Access via** | Public DNS name | `<node-ip>:<port>` |
-| **Cost** | AWS charges per LB | Free |
-| **Works on bare metal** | ❌ No | ✅ Yes |
+NodePort is the right choice here — it opens a fixed port on every node and you access the app directly via `<node-ip>:<nodeport>`. Simple, no external dependencies, works on any bare metal or self-managed cluster.
 
 Full comparison in [docs/gitops-explained.md](docs/gitops-explained.md).
 
