@@ -1,27 +1,86 @@
-# GitOps and ArgoCD — Explained
+<div align="center">
 
-![ArgoCD](https://img.shields.io/badge/ArgoCD-GitOps-EF7B4D?style=flat-square&logo=argo&logoColor=white)
-![Kubernetes](https://img.shields.io/badge/Kubernetes-v1.29-326CE5?style=flat-square&logo=kubernetes&logoColor=white)
-![GCP](https://img.shields.io/badge/GCP-kubeadm-4285F4?style=flat-square&logo=google-cloud&logoColor=white)
+# 🚀 ArgoCD GitOps on kubeadm Cluster
+### Deploying nginx, Grafana and Guestbook via GitOps — on a self-built Kubernetes cluster on GCP
 
-> A deep dive into the GitOps model — what ArgoCD actually does, why we made specific design choices on this kubeadm cluster, and what to say about it in an interview.
+![ArgoCD](https://img.shields.io/badge/ArgoCD-v3.4-EF7B4D?style=for-the-badge&logo=argo&logoColor=white)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-v1.29-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)
+![GCP](https://img.shields.io/badge/GCP-Compute_Engine-4285F4?style=for-the-badge&logo=google-cloud&logoColor=white)
+![Calico](https://img.shields.io/badge/CNI-Calico_v3.26-F8861A?style=for-the-badge)
+![Status](https://img.shields.io/badge/Apps-Synced_&_Healthy-brightgreen?style=for-the-badge)
+
+<br/>
+
+> This repo is about understanding GitOps properly — not just following a tutorial on a managed cluster.
+> Built on raw GCP VMs using kubeadm, which means everything that could go wrong, did.
+> The learnings from that are honestly more valuable than the setup itself.
+
+</div>
 
 ---
 
-## 🎯 What Problem Does ArgoCD Solve?
+> **📌 Note:** This repo demonstrates GitOps and ArgoCD concepts — deploying real workloads, testing self-healing, managing apps through Git. It is not a production-grade application. The point is understanding the pattern, not the apps themselves.
 
-**Without GitOps:**
-> **💡 Key Idea:** Git becomes the single source of truth. The cluster is expected to always match whatever is in Git — you never run `kubectl apply` for application changes again. You just push.
+Built on top of [k8s-kubeadm-gcp](https://github.com/sourav-ndx/k8s-kubeadm-gcp) — the cluster behind all of this.
+
+---
+
+## 💡 What I Learned
+
+The concept clicked fast — Git as the source of truth, cluster always matching what is in the repo, delete something manually and it comes back automatically. That self-healing moment when I deleted a deployment and watched ArgoCD recreate it within seconds — that is when it actually made sense, not when I read about it.
+
+What took longer was everything around it. Full story in [docs/troubleshooting-learnings.md](docs/troubleshooting-learnings.md).
+
+---
+
+## 📸 Screenshots
+
+### ArgoCD Dashboard — All Apps Synced and Healthy
+![ArgoCD Dashboard](docs/images/argocd-dashboard.png)
+
+### Guestbook App Resource Graph in ArgoCD UI
+![Guestbook Graph](docs/images/argocd-guestbook-graph.png)
+
+### Apps Running in Browser
+![Guestbook](docs/images/guestbook-app.png)
+![Grafana](docs/images/grafana-login.png)
+![Nginx](docs/images/nginx-welcome.png)
+
+---
+
+## 📁 Repository Structure
+
+```
+argocd_gitops/
+├── argo-apps/
+│   ├── nginx-application.yaml          # ArgoCD Application — watches manifests/nginx
+│   ├── grafana-application.yaml        # ArgoCD Application — watches manifests/grafana
+│   ├── guestbook-application.yaml      # ArgoCD Application — watches manifests/guestbook
+│   └── argocd-server-nodeport.yaml     # Custom NodePort Service for ArgoCD UI
+├── manifests/
+│   ├── nginx/
+│   │   ├── deployment.yaml
+│   │   └── service.yaml                # NodePort 30080
+│   ├── grafana/
+│   │   ├── deployment.yaml
+│   │   └── service.yaml                # NodePort 30030
+│   └── guestbook/
+│       ├── deployment.yaml
+│       └── service.yaml                # NodePort 30088
+├── docs/
+│   ├── gitops-explained.md             # Concepts deep dive — read this first
+│   ├── troubleshooting-learnings.md    # What broke and what fixed it
+│   └── gcp-setup-guide.md             # GCP-specific prerequisites and firewall rules
+└── README.md
+```
 
 ---
 
 ## 🌐 Why NodePort Instead of LoadBalancer
 
-Most ArgoCD tutorials (including the course this repo is based on) use **EKS**, where setting a Service to `type: LoadBalancer` automatically provisions a real AWS load balancer with a public DNS name.
+Tutorials based on EKS use `type: LoadBalancer` — AWS auto-provisions a real load balancer with a public DNS name. This cluster runs on raw kubeadm GCP VMs — there is no cloud controller to fulfil that request, so the EXTERNAL-IP stays `<pending>` forever.
 
-This cluster is built with **kubeadm on raw GCP VMs** — there is no cloud controller watching for LoadBalancer requests. Setting `type: LoadBalancer` here means the `EXTERNAL-IP` stays `<pending>` forever, because nothing in the cluster knows how to fulfil it.
-
-**NodePort is the correct equivalent** for a self-managed cluster — it opens a fixed port (30000–32767 range) on every node, and you access the app via `<any-node-ip>:<nodeport>`.
+**NodePort is the correct equivalent** for a self-managed cluster — access via `<node-ip>:<nodeport>` instead of a DNS name.
 
 | | LoadBalancer (EKS) | NodePort (kubeadm) |
 |:---|:---:|:---:|
@@ -29,186 +88,176 @@ This cluster is built with **kubeadm on raw GCP VMs** — there is no cloud cont
 | **Access via** | Public DNS name | `<node-ip>:<port>` |
 | **Cost** | AWS charges per LB | Free |
 | **Works on bare metal** | ❌ No | ✅ Yes |
-| **Setup complexity** | Zero — automatic | Zero — automatic |
+
+Full comparison in [docs/gitops-explained.md](docs/gitops-explained.md).
 
 ---
 
-## 🧱 Three Core ArgoCD Concepts
+## ⚠️ GCP Prerequisites — Do This First
 
-### 1️⃣ Application
+> Skipping these will cause silent, hard-to-diagnose failures — especially the IP-in-IP rule which took hours to find.
 
-An ArgoCD custom resource that tells ArgoCD three things:
-
-| Field | Answers |
-|:---|:---|
-| `source` | **Where** — which Git repo, branch, and folder path to watch |
-| `destination` | **What** — which cluster and namespace to deploy into |
-| `syncPolicy` | **How** — automation behaviour |
-
-You `kubectl apply` this file **once**. After that, ArgoCD manages everything inside the path it points to — forever.
-
-### 2️⃣ Sync
-
-The act of making the live cluster match what's in Git.
-
-- **Manual sync** — you click "Sync" in the UI or run a CLI command
-- **Automated sync** — ArgoCD does this automatically, within seconds of detecting a Git change
-
-> This repo uses **automated sync** (`syncPolicy.automated`).
-
-### 3️⃣ Self-Heal
-
-If the live cluster drifts from Git — someone runs `kubectl delete deployment nginx`, or manually edits a replica count — ArgoCD detects the difference and **reverts the cluster back to match Git.**
-
-> This is the "magic" most people notice first: delete something manually, watch ArgoCD bring it back within seconds.
-
----
-
-## ⚙️ syncPolicy — Full Reference
-
-```yaml
-syncPolicy:
-  automated:
-    prune: true        # delete cluster resources if removed from Git
-    selfHeal: true      # revert manual cluster changes back to Git state
-    allowEmpty: false   # safety guard - blocks sync that would wipe everything
-  syncOptions:
-  - CreateNamespace=true            # auto-create destination namespace if missing
-  - PrunePropagationPolicy=foreground
-  - PruneLast=true                  # delete removed resources LAST during a sync
+### Allow Calico IP-in-IP tunnel traffic (Critical)
+```bash
+gcloud compute firewall-rules create allow-calico-ipip \
+    --network=default \
+    --allow=ipip \
+    --direction=INGRESS \
+    --source-ranges=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 \
+    --description="Allow Calico IP-in-IP traffic between K8s nodes"
 ```
 
-| Field | true | false (default) |
-|:---|:---|:---|
-| **prune** | Deletes resources removed from Git | Leaves orphaned resources in cluster |
-| **selfHeal** | Auto-reverts manual cluster drift | Shows "OutOfSync", waits for manual click |
-| **allowEmpty** | Allows sync that wipes everything | Blocks sync that would result in zero resources |
-
-> **🎤 Interview line:** *"In production I'd lean toward manual sync with selfHeal off for prod — so a human reviews changes before they hit production — while using automated sync with selfHeal on for dev/staging where speed matters more than caution."*
-
----
-
-## 🔗 How the Pieces Connect in This Repo
-argo-apps/nginx-application.yaml
-│
-│  repoURL: this same repo
-│  path: manifests/nginx
-▼
-manifests/nginx/deployment.yaml + service.yaml
-│
-│  ArgoCD reads these and applies them
-▼
-Cluster: namespace "webapp" → nginx Deployment + Service
-
-argo-apps/grafana-application.yaml
-│
-│  path: manifests/grafana
-▼
-manifests/grafana/deployment.yaml + service.yaml
-│
-▼
-Cluster: namespace "monitoring" → Grafana Deployment + Service
-
-> You only ever run `kubectl apply -f argo-apps/` **once**. Everything inside `manifests/` after that is managed entirely by ArgoCD — pushing a change to those files and running `git push` **is** the new "deploy" command.
-
----
-
-## 📄 Application YAML — Field by Field
-
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: webapp-nginx
-  namespace: argocd              # Application objects always live here
-
-spec:
-  project: default               # ArgoCD's grouping concept
-
-  source:
-    repoURL: https://github.com/sourav-ndx/argocd_gitops.git
-    targetRevision: main         # branch to track
-    path: manifests/nginx        # folder inside repo to deploy
-
-  destination:
-    server: https://kubernetes.default.svc   # fixed value = "this same cluster"
-    namespace: webapp            # where the actual pods land
-
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-    - CreateNamespace=true
+### Allow internal cluster traffic
+```bash
+gcloud compute firewall-rules create allow-k8s-internal \
+    --network=default \
+    --allow=tcp,udp,icmp \
+    --direction=INGRESS \
+    --source-ranges=10.128.0.0/9,192.168.0.0/16
 ```
+
+### Allow ArgoCD UI and app NodePorts
+```bash
+gcloud compute firewall-rules create allow-argocd-nodeport \
+    --network=default \
+    --allow=tcp:30843 \
+    --direction=INGRESS \
+    --source-ranges=0.0.0.0/0
+
+gcloud compute firewall-rules create allow-webapp-nodeports \
+    --network=default \
+    --allow=tcp:30080,tcp:30030,tcp:30088 \
+    --direction=INGRESS \
+    --source-ranges=0.0.0.0/0
+```
+
+Full GCP setup guide: [docs/gcp-setup-guide.md](docs/gcp-setup-guide.md)
+
 ---
 
-## 🧪 Testing Self-Heal — What To Expect
+## 🔧 Setup — Install ArgoCD
 
 ```bash
-# Delete the nginx deployment manually
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl get pods -n argocd -w
+```
+
+### Expose ArgoCD UI via NodePort
+
+```bash
+# Delete the default ClusterIP Service that comes with install.yaml
+kubectl delete svc argocd-server -n argocd
+
+# Apply our own NodePort Service
+kubectl apply -f argo-apps/argocd-server-nodeport.yaml
+kubectl get svc argocd-server -n argocd
+```
+
+### Get admin password
+
+```bash
+kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath="{.data.password}" | base64 -d
+```
+
+Username: `admin`
+
+### Get current external IP
+
+> GCP ephemeral IPs change every time you stop a VM — always check after restart
+
+```bash
+gcloud compute instances describe k8s-control \
+    --zone=us-central1-a \
+    --format="get(networkInterfaces[0].accessConfigs[0].natIP)"
+```
+
+Access UI: `https://<external-ip>:30843`
+
+---
+
+## 🚀 Deploy the Applications
+
+```bash
+git clone https://github.com/sourav-ndx/argocd_gitops.git
+cd argocd_gitops
+
+kubectl apply -f argo-apps/nginx-application.yaml
+kubectl apply -f argo-apps/grafana-application.yaml
+kubectl apply -f argo-apps/guestbook-application.yaml
+
+kubectl get applications -n argocd -w
+```
+
+> ArgoCD reads those Application objects, pulls the manifests from this GitHub repo, and deploys everything automatically. You never touch the manifests folder directly — that is the whole point.
+
+---
+
+## 🌍 Access the Apps
+
+| App | URL | Login |
+|:---|:---|:---|
+| **ArgoCD UI** | `https://node-ip:30843` | admin / (from secret above) |
+| **nginx** | `http://node-ip:30080` | — |
+| **Grafana** | `http://node-ip:30030` | admin / admin123 |
+| **Guestbook** | `http://node-ip:30088` | — |
+
+---
+
+## 🧪 Test Self-Healing
+
+```bash
+# Delete nginx deployment manually
 kubectl delete deployment nginx -n webapp
 
-# Within seconds, check again
+# Within seconds — check again
 kubectl get deployment nginx -n webapp
-# It's back — ArgoCD recreated it because Git still says it should exist
+# It is back. ArgoCD detected the drift and recreated it from Git.
 ```
 
-> **This is the single most important thing to demonstrate** when explaining GitOps to an interviewer — it proves the cluster is no longer the source of truth. Git is.
+> This is the single most important thing to demonstrate when explaining GitOps — it proves the cluster is no longer the source of truth. Git is.
 
 ---
 
-## 🔍 syncPolicy — Every Field, What Happens In Each Case
+## 🔄 Force a Manual Sync
 
-### automated block
-
-| Field | true | false (default) | What happens in this repo |
-|:---|:---|:---|:---|
-| **prune** | Deletes resources removed from Git | Leaves orphaned resources in cluster | Delete a YAML file from `manifests/`, push — matching resource is deleted from cluster automatically |
-| **selfHeal** | Auto-reverts manual cluster drift | Shows "OutOfSync", waits for manual click | `kubectl delete deployment nginx` gets reverted — deployment comes back within seconds |
-| **allowEmpty** | Allows sync that wipes everything | Blocks sync that would result in zero resources | Protects against an accidental empty folder deleting a whole running app |
-
-### syncOptions list
-
-| Option | What it does | Why it matters here |
-|:---|:---|:---|
-| `CreateNamespace=true` | Auto-creates destination namespace if missing | This is why `webapp` and `monitoring` namespaces appeared without manual `kubectl create namespace` |
-| `PrunePropagationPolicy=foreground` | Waits for child objects (Pods) to fully delete before parent is considered deleted | Cleaner, more predictable deletion order during prune |
-| `PruneLast=true` | Deletions happen after all creates/updates succeed | Avoids brief service gaps when a sync both creates and deletes resources |
-| `Validate=false` | Skips kubectl schema validation | Useful for CRDs ArgoCD's bundled schema doesn't recognize — not needed for our plain Deployment/Service |
-| `ApplyOutOfSyncOnly=true` | Only re-applies resources that actually drifted | Performance optimization for Applications with many resources |
-| `RespectIgnoreDifferences=true` | Honors a separate `ignoreDifferences` field for fields that are allowed to drift | Important once HPA is added — replica count changes from HPA shouldn't trigger selfHeal reverts |
-
-### retry block (not configured in this repo, but production-relevant)
-
-```yaml
-retry:
-  limit: 5
-  backoff:
-    duration: 5s
-    factor: 2
-    maxDuration: 3m
+```bash
+kubectl patch application webapp-nginx -n argocd --type merge -p '{"operation":{"sync":{}}}'
 ```
 
-Without this block, a sync that fails due to a transient issue (e.g. brief network blip to GitHub) simply shows **Failed** with no automatic retry. Adding `retry` makes ArgoCD attempt the sync again with exponential backoff (5s → 10s → 20s → 40s → 80s, capped at 3 minutes) before giving up.
+---
 
-> **🎤** *"prune and selfHeal are the two fields that make ArgoCD feel 'magic' — they're what makes the cluster self-correcting. allowEmpty is the safety net underneath both. The syncOptions list handles operational details like namespace creation and deletion ordering. In a hardened production setup I'd also add a retry block so transient Git or network failures don't require manual intervention."*
+## 🧹 Cleanup
+
+```bash
+kubectl delete -f argo-apps/
+kubectl delete namespace webapp monitoring guestbook argocd
+```
 
 ---
 
-> **The GitOps concepts and ArgoCD mechanics are identical regardless of cluster provider.** Only the Service exposure method changes — proof that understanding fundamentals transfers across any infrastructure.
+## 📖 Further Reading
 
-Note : This Repo is Just to Understand the Concepts of GITOPS & ARCOCD , this does not deploy an End to End two or three tier working application .
-Its just deploy some deployments and demostrates the use cases of GitOps and ARGOCD in detail .
+- [GitOps and ArgoCD Explained](docs/gitops-explained.md) — concepts, syncPolicy deep dive, field-by-field Application YAML breakdown
+- [Troubleshooting and Learnings](docs/troubleshooting-learnings.md) — what broke, what fixed it, full debugging approach
+- [GCP Setup Guide](docs/gcp-setup-guide.md) — all GCP-specific prerequisites and firewall rules with exact CLI commands
 
 ---
 
+## 👤 Author
+
+**Sourav Nandy** — Platform and DevOps Engineer | CKA Certified
+Ericsson / Verizon | OpenShift Production SME | 8+ Years
+
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-sourav--nandy--0115-0A66C2?style=flat&logo=linkedin)](https://linkedin.com/in/sourav-nandy-0115)
+[![GitHub](https://img.shields.io/badge/GitHub-sourav--ndx-181717?style=flat&logo=github)](https://github.com/sourav-ndx)
+
+---
 
 <div align="center">
 
-
-
 *Built on [k8s-kubeadm-gcp](https://github.com/sourav-ndx/k8s-kubeadm-gcp) — the cluster behind this GitOps setup.*
 
-</div>
+⭐ Star this repo if it helped you understand GitOps and ArgoCD
 
+</div>
