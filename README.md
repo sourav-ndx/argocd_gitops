@@ -82,8 +82,6 @@ This cluster runs on raw kubeadm VMs — there is no cloud controller to provisi
 
 NodePort is the right choice here — it opens a fixed port on every node and you access the app directly via `<node-ip>:<nodeport>`. Simple, no external dependencies, works on any bare metal or self-managed cluster.
 
-Full comparison in [docs/gitops-explained.md](docs/gitops-explained.md).
-
 ---
 
 ## ⚠️ GCP Prerequisites — Do This First
