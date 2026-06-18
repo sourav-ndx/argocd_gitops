@@ -36,10 +36,10 @@ What took longer was everything around it. Full story in [docs/troubleshooting-l
 ## 📸 Screenshots
 
 ### ArgoCD Dashboard — All Apps Synced and Healthy
-![ArgoCD Dashboard](docs/images/argocd-dashboard.png)
+![ArgoCD Dashboard](docs/argocd-dashboard.png)
 
 ### Guestbook App Resource Graph in ArgoCD UI
-![Guestbook Graph](docs/images/argocd-guestbook-graph.png)
+![Guestbook Graph](docs/argocd-guestbook-graph.png)
 
 ### Apps Running in Browser
 ![Guestbook](docs/guestbook-app.png)
